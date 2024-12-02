@@ -74,6 +74,10 @@ func (pool *ReturnableTaskPool[T, R]) Start(ignoreEmpty bool) []R {
 	// 等待直到队列中无任务，且任务列表中也没有任务了，说明全部任务完成
 	for !pool.TaskQueue.IsEmpty() || runningTasks.size() != 0 {
 		// 阻塞当前线程
+		// 如果接收到终止信号，isAllDone改变，则退出
+		if isAllDone {
+			return resultList
+		}
 	}
 	// 标记全部完成
 	isAllDone = true
