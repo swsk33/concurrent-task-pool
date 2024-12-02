@@ -53,16 +53,21 @@ func (pool *ReturnableTaskPool[T, R]) Start(ignoreEmpty bool) []R {
 	runningTasks := newMapSet[T]()
 	// 结果收集锁
 	lock := &sync.Mutex{}
-	// 在一个新的线程接收终止信号
+	// 任务是否全部完成
 	isAllDone := false
+	// 在一个新的线程接收终止信号
+	// 是否被中断
+	isInterrupt := false
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-signals
-		// 标记程序被退出
+		// 标记程序执行完成，结束全部worker
 		isAllDone = true
 		// 执行Shutdown回调
 		pool.Shutdown(runningTasks.toSlice())
+		// 标记为中断
+		isInterrupt = true
 	}()
 	// 创建结果列表切片
 	resultList := make([]R, 0)
@@ -74,8 +79,8 @@ func (pool *ReturnableTaskPool[T, R]) Start(ignoreEmpty bool) []R {
 	// 等待直到队列中无任务，且任务列表中也没有任务了，说明全部任务完成
 	for !pool.TaskQueue.IsEmpty() || runningTasks.size() != 0 {
 		// 阻塞当前线程
-		// 如果接收到终止信号，isAllDone改变，则退出
-		if isAllDone {
+		// 如果接收到终止信号且被中断，则退出
+		if isInterrupt {
 			return resultList
 		}
 	}
