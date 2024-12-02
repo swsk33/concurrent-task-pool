@@ -11,8 +11,8 @@ import (
 type TaskPool[T comparable] struct {
 	// 任务并发数，即worker数量，当队列中任务数量足够时，并发任务池会一直保持有concurrent个任务一直在并发运行
 	Concurrent int
-	// 存放全部任务列表
-	TaskList []T
+	// 存放全部任务的队列
+	TaskQueue *ArrayQueue[T]
 	// 执行每个任务的回调函数逻辑
 	//
 	// 函数参数为从任务队列中取出的一个任务对象，每个函数在一个线程中运行
@@ -27,7 +27,7 @@ type TaskPool[T comparable] struct {
 func NewTaskPool[T comparable](concurrent int, taskList []T, runFunction func(T), shutdownFunction func([]T)) *TaskPool[T] {
 	return &TaskPool[T]{
 		Concurrent: concurrent,
-		TaskList:   taskList,
+		TaskQueue:  NewArrayQueueFromSlice(taskList),
 		Run:        runFunction,
 		Shutdown:   shutdownFunction,
 	}
@@ -37,8 +37,6 @@ func NewTaskPool[T comparable](concurrent int, taskList []T, runFunction func(T)
 func (pool *TaskPool[T]) Start() {
 	// 存放当前正在运行的全部任务集合
 	runningTasks := newMapSet[T]()
-	// 创建通道作为任务队列
-	taskQueue := make(chan T, len(pool.TaskList))
 	// 计数器
 	waitGroup := &sync.WaitGroup{}
 	// 在一个新的线程接收终止信号
@@ -54,15 +52,9 @@ func (pool *TaskPool[T]) Start() {
 	}()
 	// 创建worker
 	for i := 0; i < pool.Concurrent; i++ {
-		eachWorker := newWorker[T](pool.Run, taskQueue, runningTasks)
+		eachWorker := newWorker[T](pool.Run, pool.TaskQueue, runningTasks)
 		eachWorker.start(waitGroup, &isShutdown)
 	}
-	// 向队列通道发送任务
-	for _, task := range pool.TaskList {
-		taskQueue <- task
-	}
-	// 关闭通道
-	close(taskQueue)
 	// 等待全部worker执行完成
 	waitGroup.Wait()
 }
