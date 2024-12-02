@@ -11,8 +11,8 @@ import (
 type ReturnableTaskPool[T, R comparable] struct {
 	// 任务并发数，即worker数量，当队列中任务数量足够时，并发任务池会一直保持有concurrent个任务一直在并发运行
 	Concurrent int
-	// 存放全部任务列表
-	TaskList []T
+	// 存放全部任务的队列
+	TaskQueue *ArrayQueue[T]
 	// 执行每个任务的回调函数逻辑
 	//
 	// 函数参数为从任务队列中取出的一个任务对象，每个函数在一个线程中运行
@@ -27,7 +27,17 @@ type ReturnableTaskPool[T, R comparable] struct {
 func NewReturnableTaskPool[T, R comparable](concurrent int, taskList []T, runFunction func(T) R, shutdownFunction func([]T)) *ReturnableTaskPool[T, R] {
 	return &ReturnableTaskPool[T, R]{
 		Concurrent: concurrent,
-		TaskList:   taskList,
+		TaskQueue:  NewArrayQueueFromSlice(taskList),
+		Run:        runFunction,
+		Shutdown:   shutdownFunction,
+	}
+}
+
+// NewReturnableTaskPoolUseQueue 通过现有的任务队列创建任务池，任务池中的队列将是传入队列的引用
+func NewReturnableTaskPoolUseQueue[T, R comparable](concurrent int, taskQueue *ArrayQueue[T], runFunction func(T) R, shutdownFunction func([]T)) *ReturnableTaskPool[T, R] {
+	return &ReturnableTaskPool[T, R]{
+		Concurrent: concurrent,
+		TaskQueue:  taskQueue,
 		Run:        runFunction,
 		Shutdown:   shutdownFunction,
 	}
@@ -41,20 +51,16 @@ func NewReturnableTaskPool[T, R comparable](concurrent int, taskList []T, runFun
 func (pool *ReturnableTaskPool[T, R]) Start(ignoreEmpty bool) []R {
 	// 存放当前正在运行的全部任务集合
 	runningTasks := newMapSet[T]()
-	// 创建通道作为任务队列
-	taskQueue := make(chan T, len(pool.TaskList))
-	// 计数器
-	waitGroup := &sync.WaitGroup{}
 	// 结果收集锁
 	lock := &sync.Mutex{}
 	// 在一个新的线程接收终止信号
-	isShutdown := false
+	isAllDone := false
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-signals
 		// 标记程序被退出
-		isShutdown = true
+		isAllDone = true
 		// 执行Shutdown回调
 		pool.Shutdown(runningTasks.toSlice())
 	}()
@@ -62,16 +68,14 @@ func (pool *ReturnableTaskPool[T, R]) Start(ignoreEmpty bool) []R {
 	resultList := make([]R, 0)
 	// 创建worker
 	for i := 0; i < pool.Concurrent; i++ {
-		eachWorker := newReturnableWorker[T, R](pool.Run, taskQueue, runningTasks, &resultList)
-		eachWorker.start(waitGroup, lock, &isShutdown, ignoreEmpty)
+		eachWorker := newReturnableWorker[T, R](pool.Run, pool.TaskQueue, runningTasks, &resultList)
+		eachWorker.start(lock, &isAllDone, ignoreEmpty)
 	}
-	// 向队列通道发送任务
-	for _, task := range pool.TaskList {
-		taskQueue <- task
+	// 等待直到队列中无任务，且任务列表中也没有任务了，说明全部任务完成
+	for !pool.TaskQueue.IsEmpty() || runningTasks.size() != 0 {
+		// 阻塞当前线程
 	}
-	// 关闭通道
-	close(taskQueue)
-	// 等待全部worker执行完成
-	waitGroup.Wait()
+	// 标记全部完成
+	isAllDone = true
 	return resultList
 }

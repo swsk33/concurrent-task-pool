@@ -154,3 +154,79 @@ func main() {
 - 参数`3`自定义任务执行逻辑回调函数有返回值，需要在这个回调函数中**返回任务执行完成后的结果**
 
 此外，`Start`方法启动任务池时，需要传入一个`bool`类型参数表示**是否忽略空的任务结果**，如果该参数为`true`，那么当一个任务返回的结果为`nil`或者对应类型零值时，这个结果就不会被包含在最终的结果中。此外，这里的`Start`的返回值就是全部任务执行后收集的全部返回结果的切片。
+
+### (5) 实现失败重试
+
+在`TaskPool`对象中，都使用了一个线程安全的队列来实现存放未完成任务，这样的话如果有的任务执行失败了，我们就可以将其放回队列，实现后续重试该任务。
+
+以无返回值的并发任务池为例，实现在任务执行失败时，将任务放回队列以后续重试的操作：
+
+```go
+package main
+
+import (
+	"fmt"
+	"gitee.com/swsk33/concurrent-task-pool"
+	"time"
+)
+
+// ...
+
+func main() {
+	// 1.创建任务队列
+	list := make([]*DownloadTask, 0)
+	for i := 1; i <= 10; i++ {
+		if i == 3 {
+			list = append(list, &DownloadTask{
+				url:      "",
+				filename: fmt.Sprintf("file-%d.txt", i),
+			})
+			continue
+		}
+		list = append(list, &DownloadTask{
+			url:      fmt.Sprintf("http://example.com/file/%d.txt", i),
+			filename: fmt.Sprintf("file-%d.txt", i),
+		})
+	}
+	// 从切片即可创建队列
+	queue := concurrent_task_pool.NewArrayQueueFromSlice(list)
+	// 2.创建任务池，使用已有队列
+	pool := concurrent_task_pool.NewTaskPoolUseQueue[*DownloadTask](3, queue, func(task *DownloadTask) {
+		fmt.Printf("正在下载：%s...\n", task.filename)
+		// 模拟出现错误
+		if task.url == "" {
+			fmt.Println("出现错误！")
+			task.url = fmt.Sprintf("http://example.com/file/%s", task.filename)
+			// 将任务重新放回队列
+			queue.Offer(task)
+			return
+		}
+		// 模拟执行任务
+		time.Sleep(350 * time.Millisecond)
+		fmt.Printf("下载%s完成！\n", task.filename)
+	}, func(tasks []*DownloadTask) {
+		fmt.Println("接收到终止信号！")
+		fmt.Println("当前任务：")
+		for _, task := range tasks {
+			fmt.Println(task.url)
+		}
+	})
+	// 3.启动任务池
+	pool.Start()
+}
+```
+
+可见这里有以下的不同：
+
+- 首先通过任务对象列表切片创建了任务队列，这里的队列对象是内部实现的线程安全的顺序队列，可通过`NewArrayQueueFromSlice`构造函数，传入一个现成的切片创建队列，返回队列对象指针`*ArrayQueue`，队列对象有下列方法：
+	- `Poll()` 队头元素出队列
+	- `Offer(e)` 元素进入队列
+	- `Peek()` 查看队头元素，但是不移除
+	- `IsEmpty()` 返回队列是否为空
+	- `Size()` 返回队列元素个数
+	- `Clear()` 清空队列
+	- `ToSlice()` 将队列以切片形式返回
+- 使用`NewTaskPoolUseQueue`构造函数传入一个现成的任务队列对象指针来创建一个任务池，其第`2`个参数不再是任务切片对象，而是任务队列指针（传入的任务队列是对原始队列的引用，而不是副本）
+- 在自定义的任务执行回调函数中，当遇到任务失败的情况时，就可以将当前任务对象放回队列，实现后续重试该任务
+
+此外，带有返回值的并发任务池也可以使用现有的队列来创建，使用`NewReturnableTaskPoolUseQueue`构造函数即可，同样是把第`2`个参数换成`ArrayQueue`对象指针。

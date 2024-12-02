@@ -3,7 +3,6 @@ package concurrent_task_pool
 import (
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
 )
 
@@ -33,28 +32,41 @@ func NewTaskPool[T comparable](concurrent int, taskList []T, runFunction func(T)
 	}
 }
 
+// NewTaskPoolUseQueue 通过现有的任务队列创建任务池，任务池中的队列将是传入队列的引用
+func NewTaskPoolUseQueue[T comparable](concurrent int, taskQueue *ArrayQueue[T], runFunction func(T), shutdownFunction func([]T)) *TaskPool[T] {
+	return &TaskPool[T]{
+		Concurrent: concurrent,
+		TaskQueue:  taskQueue,
+		Run:        runFunction,
+		Shutdown:   shutdownFunction,
+	}
+}
+
 // Start 启动并发任务池
 func (pool *TaskPool[T]) Start() {
 	// 存放当前正在运行的全部任务集合
 	runningTasks := newMapSet[T]()
-	// 计数器
-	waitGroup := &sync.WaitGroup{}
+	// 表示任务是否全部完成了
+	isAllDone := false
 	// 在一个新的线程接收终止信号
-	isShutdown := false
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-signals
 		// 标记程序被退出
-		isShutdown = true
+		isAllDone = true
 		// 执行Shutdown回调
 		pool.Shutdown(runningTasks.toSlice())
 	}()
 	// 创建worker
 	for i := 0; i < pool.Concurrent; i++ {
 		eachWorker := newWorker[T](pool.Run, pool.TaskQueue, runningTasks)
-		eachWorker.start(waitGroup, &isShutdown)
+		eachWorker.start(&isAllDone)
 	}
-	// 等待全部worker执行完成
-	waitGroup.Wait()
+	// 等待直到队列中无任务，且任务列表中也没有任务了，说明全部任务完成
+	for !pool.TaskQueue.IsEmpty() || runningTasks.size() != 0 {
+		// 阻塞当前线程
+	}
+	// 标记全部完成
+	isAllDone = true
 }

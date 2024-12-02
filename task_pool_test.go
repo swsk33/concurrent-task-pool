@@ -13,7 +13,7 @@ type DownloadTask struct {
 }
 
 // 测试无返回值的并发任务池
-func TestTaskPool(t *testing.T) {
+func TestTaskPool_Start(t *testing.T) {
 	// 1.创建任务列表
 	list := make([]*DownloadTask, 0)
 	for i := 1; i <= 30; i++ {
@@ -25,6 +25,50 @@ func TestTaskPool(t *testing.T) {
 	// 2.创建任务池
 	pool := NewTaskPool[*DownloadTask](3, list, func(task *DownloadTask) {
 		fmt.Printf("正在下载：%s...\n", task.filename)
+		// 模拟执行任务
+		time.Sleep(350 * time.Millisecond)
+		fmt.Printf("下载%s完成！\n", task.filename)
+	}, func(tasks []*DownloadTask) {
+		fmt.Println("接收到终止信号！")
+		fmt.Println("当前任务：")
+		for _, task := range tasks {
+			fmt.Println(task.url)
+		}
+	})
+	// 3.启动任务池
+	pool.Start()
+}
+
+// 测试无返回值的并发任务池-重试
+func TestTaskPool_Retry(t *testing.T) {
+	// 1.创建任务队列
+	list := make([]*DownloadTask, 0)
+	for i := 1; i <= 10; i++ {
+		if i == 3 {
+			list = append(list, &DownloadTask{
+				url:      "",
+				filename: fmt.Sprintf("file-%d.txt", i),
+			})
+			continue
+		}
+		list = append(list, &DownloadTask{
+			url:      fmt.Sprintf("http://example.com/file/%d.txt", i),
+			filename: fmt.Sprintf("file-%d.txt", i),
+		})
+	}
+	// 从切片即可创建队列
+	queue := NewArrayQueueFromSlice(list)
+	// 2.创建任务池，使用已有队列
+	pool := NewTaskPoolUseQueue[*DownloadTask](3, queue, func(task *DownloadTask) {
+		fmt.Printf("正在下载：%s...\n", task.filename)
+		// 模拟出现错误
+		if task.url == "" {
+			fmt.Println("出现错误！")
+			task.url = fmt.Sprintf("http://example.com/file/%s", task.filename)
+			// 将任务重新放回队列
+			queue.Offer(task)
+			return
+		}
 		// 模拟执行任务
 		time.Sleep(350 * time.Millisecond)
 		fmt.Printf("下载%s完成！\n", task.filename)
