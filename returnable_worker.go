@@ -11,22 +11,25 @@ import "sync"
 // 该worker所执行的任务是有返回值的
 type returnableWorker[T, R comparable] struct {
 	// 自定义任务运行的回调函数
-	run func(task T) R
+	run func(task T, pool *ReturnableTaskPool[T, R]) R
 	// 存放全部任务的队列的引用
 	taskQueue *ArrayQueue[T]
 	// 存放当前正在执行的任务的集合引用
 	currentTask *mapSet[T]
 	// 收集存放任务结果的切片引用
 	resultList *[]R
+	// 该worker所属的并发任务池对象的引用
+	pool *ReturnableTaskPool[T, R]
 }
 
 // returnableWorker 构造函数
-func newReturnableWorker[T, R comparable](run func(T) R, queue *ArrayQueue[T], set *mapSet[T], result *[]R) *returnableWorker[T, R] {
+func newReturnableWorker[T, R comparable](run func(T, *ReturnableTaskPool[T, R]) R, queue *ArrayQueue[T], set *mapSet[T], result *[]R, pool *ReturnableTaskPool[T, R]) *returnableWorker[T, R] {
 	return &returnableWorker[T, R]{
 		run:         run,
 		taskQueue:   queue,
 		currentTask: set,
 		resultList:  result,
+		pool:        pool,
 	}
 }
 
@@ -51,7 +54,7 @@ func (worker *returnableWorker[T, R]) start(lock *sync.Mutex, isShutdown *bool, 
 			// 将当前任务存入当前正在运行的任务集合中
 			worker.currentTask.add(task)
 			// 执行任务
-			result := worker.run(task)
+			result := worker.run(task, worker.pool)
 			// 收集结果
 			if result != resultZero || (result == resultZero && !ignoreEmpty) {
 				lock.Lock()

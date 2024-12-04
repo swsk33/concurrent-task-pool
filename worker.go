@@ -8,19 +8,22 @@ package concurrent_task_pool
 // 该worker所执行的任务是无返回值的
 type worker[T comparable] struct {
 	// 自定义任务运行的回调函数
-	run func(task T)
+	run func(task T, taskPool *TaskPool[T])
 	// 存放全部任务的队列的引用
 	taskQueue *ArrayQueue[T]
 	// 存放当前正在执行的任务的集合引用
 	currentTask *mapSet[T]
+	// 该worker所属的并发任务池对象的引用
+	taskPool *TaskPool[T]
 }
 
 // worker 构造函数
-func newWorker[T comparable](run func(T), queue *ArrayQueue[T], set *mapSet[T]) *worker[T] {
+func newWorker[T comparable](run func(T, *TaskPool[T]), queue *ArrayQueue[T], set *mapSet[T], pool *TaskPool[T]) *worker[T] {
 	return &worker[T]{
 		run:         run,
 		taskQueue:   queue,
 		currentTask: set,
+		taskPool:    pool,
 	}
 }
 
@@ -42,7 +45,7 @@ func (worker *worker[T]) start(isShutdown *bool) {
 			// 将当前任务存入当前正在运行的任务集合中
 			worker.currentTask.add(task)
 			// 执行任务
-			worker.run(task)
+			worker.run(task, worker.taskPool)
 			// 执行完成后，从当前任务列表移除
 			worker.currentTask.remove(task)
 		}

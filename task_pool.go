@@ -14,31 +14,30 @@ type TaskPool[T comparable] struct {
 	TaskQueue *ArrayQueue[T]
 	// 执行每个任务的回调函数逻辑
 	//
-	// 函数参数为从任务队列中取出的一个任务对象，每个函数在一个线程中运行
-	Run func(T)
+	// 回调函数参数：
+	//
+	// task 从任务队列中取出的一个任务对象，该任务对象可在该函数中被处理并进一步执行任务，该函数调用在一个单独的线程中运行
+	//
+	// taskPool 并发任务池本身，可在每个任务执行时通过该任务池访问任务池中的队列或者中断任务池等
+	Run func(task T, taskPool *TaskPool[T])
 	// 接收到终止信号后的操作
 	//
 	// 参数为正在运行的任务列表，可将其保存起来
 	Shutdown func(tasks []T)
+	// 是否被中断
+	//
+	// 当该变量为true时，则会立即停止并发任务池的任务
+	isInterrupt bool
 }
 
 // NewTaskPool 通过现有的任务列表创建任务池
-func NewTaskPool[T comparable](concurrent int, taskList []T, runFunction func(T), shutdownFunction func([]T)) *TaskPool[T] {
+func NewTaskPool[T comparable](concurrent int, taskList []T, runFunction func(T, *TaskPool[T]), shutdownFunction func([]T)) *TaskPool[T] {
 	return &TaskPool[T]{
-		Concurrent: concurrent,
-		TaskQueue:  NewArrayQueueFromSlice(taskList),
-		Run:        runFunction,
-		Shutdown:   shutdownFunction,
-	}
-}
-
-// NewTaskPoolUseQueue 通过现有的任务队列创建任务池，任务池中的队列将是传入队列的引用
-func NewTaskPoolUseQueue[T comparable](concurrent int, taskQueue *ArrayQueue[T], runFunction func(T), shutdownFunction func([]T)) *TaskPool[T] {
-	return &TaskPool[T]{
-		Concurrent: concurrent,
-		TaskQueue:  taskQueue,
-		Run:        runFunction,
-		Shutdown:   shutdownFunction,
+		Concurrent:  concurrent,
+		TaskQueue:   NewArrayQueueFromSlice(taskList),
+		Run:         runFunction,
+		Shutdown:    shutdownFunction,
+		isInterrupt: false,
 	}
 }
 
@@ -49,32 +48,32 @@ func (pool *TaskPool[T]) Start() {
 	// 表示任务是否全部完成了
 	isAllDone := false
 	// 在一个新的线程接收终止信号
-	// 是否被中断
-	isInterrupt := false
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-signals
-		// 标记程序执行完成，结束全部worker
+		// 结束全部worker
 		isAllDone = true
 		// 执行Shutdown回调
 		pool.Shutdown(runningTasks.toSlice())
 		// 标记为中断
-		isInterrupt = true
+		pool.isInterrupt = true
 	}()
 	// 创建worker
 	for i := 0; i < pool.Concurrent; i++ {
-		eachWorker := newWorker[T](pool.Run, pool.TaskQueue, runningTasks)
+		eachWorker := newWorker[T](pool.Run, pool.TaskQueue, runningTasks, pool)
 		eachWorker.start(&isAllDone)
 	}
 	// 等待直到队列中无任务，且任务列表中也没有任务了，说明全部任务完成
-	for !pool.TaskQueue.IsEmpty() || runningTasks.size() != 0 {
+	// 如果被标记为中断，则会立即退出
+	for !pool.isInterrupt && (!pool.TaskQueue.IsEmpty() || runningTasks.size() != 0) {
 		// 阻塞当前线程
-		// 如果接收到终止信号且被中断，则退出
-		if isInterrupt {
-			return
-		}
 	}
-	// 标记全部完成
+	// 结束全部worker
 	isAllDone = true
+}
+
+// Interrupt 中断任务池，立即停止任务池中正在执行的任务
+func (pool *TaskPool[T]) Interrupt() {
+	pool.isInterrupt = true
 }
