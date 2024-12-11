@@ -1,6 +1,8 @@
 package concurrent_task_pool
 
-import "sync"
+import (
+	"sync"
+)
 
 // returnableWorker 是任务池中的每一个任务运行器
 //
@@ -12,34 +14,31 @@ import "sync"
 type returnableWorker[T, R comparable] struct {
 	// 自定义任务运行的回调函数
 	run func(task T, pool *ReturnableTaskPool[T, R]) R
-	// 存放全部任务的队列的引用
-	taskQueue *ArrayQueue[T]
-	// 存放当前正在执行的任务的集合引用
-	currentTask *mapSet[T]
 	// 收集存放任务结果的切片引用
 	resultList *[]R
 	// 该worker所属的并发任务池对象的引用
-	pool *ReturnableTaskPool[T, R]
+	taskPool *ReturnableTaskPool[T, R]
 }
 
 // returnableWorker 构造函数
-func newReturnableWorker[T, R comparable](run func(T, *ReturnableTaskPool[T, R]) R, queue *ArrayQueue[T], set *mapSet[T], result *[]R, pool *ReturnableTaskPool[T, R]) *returnableWorker[T, R] {
+func newReturnableWorker[T, R comparable](run func(T, *ReturnableTaskPool[T, R]) R, result *[]R, pool *ReturnableTaskPool[T, R]) *returnableWorker[T, R] {
 	return &returnableWorker[T, R]{
-		run:         run,
-		taskQueue:   queue,
-		currentTask: set,
-		resultList:  result,
-		pool:        pool,
+		run:        run,
+		resultList: result,
+		taskPool:   pool,
 	}
 }
 
 // 启动worker，该函数会在一个单独的线程中启动并运行worker
 // worker在单独的线程运行，会一直从任务队列中获取任务对象，直到isShutdown为true才结束
 //
-// lock 用于收集结果的锁，确保多个worker使用同一个lock
-// isShutdown 指示全部任务是否结束的指针，当为true时，worker会在执行完当前任务后立即结束
-// ignoreEmpty 是否收集空的任务执行返回值
+//   - lock 用于收集结果的锁，确保多个worker使用同一个lock
+//   - isShutdown 指示全部任务是否结束的指针，当为true时，worker会在执行完当前任务后立即结束
+//   - ignoreEmpty 是否收集空的任务执行返回值
 func (worker *returnableWorker[T, R]) start(lock *sync.Mutex, isShutdown *bool, ignoreEmpty bool) {
+	// 当前任务池
+	pool := worker.taskPool
+	// 泛型零值
 	var taskZero T
 	var resultZero R
 	// 在新的线程中运行任务
@@ -47,14 +46,14 @@ func (worker *returnableWorker[T, R]) start(lock *sync.Mutex, isShutdown *bool, 
 		// 除非isShutdown为true，否则将会一直尝试从队列取值
 		for !*isShutdown {
 			// 从队列取值
-			task := worker.taskQueue.Poll()
+			task := pool.taskQueue.poll()
 			if task == taskZero {
 				continue
 			}
 			// 将当前任务存入当前正在运行的任务集合中
-			worker.currentTask.add(task)
+			pool.runningTasks.add(task)
 			// 执行任务
-			result := worker.run(task, worker.pool)
+			result := worker.run(task, worker.taskPool)
 			// 收集结果
 			if result != resultZero || (result == resultZero && !ignoreEmpty) {
 				lock.Lock()
@@ -62,7 +61,7 @@ func (worker *returnableWorker[T, R]) start(lock *sync.Mutex, isShutdown *bool, 
 				lock.Unlock()
 			}
 			// 执行完成后，从当前任务列表移除
-			worker.currentTask.remove(task)
+			pool.runningTasks.remove(task)
 		}
 	}()
 }
