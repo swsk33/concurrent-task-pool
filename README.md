@@ -32,7 +32,7 @@
 通过下列命令：
 
 ```bash
-go get gitee.com/swsk33/concurrent-task-pool
+go get gitee.com/swsk33/concurrent-task-pool/v2
 ```
 
 ### (2) 创建任务对象结构体
@@ -62,7 +62,7 @@ package main
 
 import (
 	"fmt"
-	"gitee.com/swsk33/concurrent-task-pool"
+	"gitee.com/swsk33/concurrent-task-pool/v2"
 	"time"
 )
 
@@ -143,7 +143,7 @@ package main
 
 import (
 	"fmt"
-	"gitee.com/swsk33/concurrent-task-pool"
+	"gitee.com/swsk33/concurrent-task-pool/v2"
 	"time"
 )
 
@@ -219,7 +219,7 @@ package main
 
 import (
 	"fmt"
-	"gitee.com/swsk33/concurrent-task-pool"
+	"gitee.com/swsk33/concurrent-task-pool/v2"
 	"time"
 )
 
@@ -273,7 +273,7 @@ package main
 
 import (
 	"fmt"
-	"gitee.com/swsk33/concurrent-task-pool"
+	"gitee.com/swsk33/concurrent-task-pool/v2"
 	"time"
 )
 
@@ -332,7 +332,7 @@ package main
 
 import (
 	"fmt"
-	"gitee.com/swsk33/concurrent-task-pool"
+	"gitee.com/swsk33/concurrent-task-pool/v2"
 	"time"
 )
 
