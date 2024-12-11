@@ -45,6 +45,7 @@ func createTaskListWithError() []*DownloadTask {
 		list = append(list, &DownloadTask{
 			url:      fmt.Sprintf("http://example.com/file/%d.txt", i),
 			filename: fmt.Sprintf("file-%d.txt", i),
+			process:  0,
 		})
 	}
 	return list

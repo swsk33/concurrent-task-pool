@@ -12,9 +12,9 @@
 - 一旦有任务执行完成，就立即从队列取出任务给空闲队列执行，保证一直有`n`个任务在执行（除非队列里面没有任务了）
 - 等待队列为空，且全部线程都执行完成，说明全部任务执行完成，收集结果
 
-在这个过程中，我们需要编写管理并发任务的逻辑，包括但不限于根据当前并发的任务数决定是否取出任务、结果收集的线程安全问题、并发计数器的维护等等，这是一个比较麻烦的过程。
+在这个过程中，我们需要编写管理并发任务的逻辑，包括但不限于根据当前并发的任务数决定是否取出任务、结果收集的线程安全问题、并发计数器的维护等等，这是一个比较繁琐的过程。
 
-该并发任务池提供了一个基本的工作池模式的实现，对上述批处理执行任务场景中任务管理的逻辑进行了封装，仅需传入任务列表、任务执行逻辑以及一些参数，即可运行一个并发任务池，实现大量任务的多线程批处理工作。
+该并发任务池提供了一个基本的**工作池模式**的实现，对上述批处理执行任务场景中任务管理的逻辑进行了封装，仅需传入任务列表、任务执行逻辑以及一些参数，即可运行一个并发任务池，实现大量任务的多线程批处理工作。
 
 该并发任务池主要功能如下：
 
@@ -22,6 +22,8 @@
 - 自定义并发数
 - 自定义每个任务的执行逻辑
 - 自定义程序接收到终止信号（例如`Ctrl + C`时）的自定义停机逻辑
+- 任务重试功能
+- 任务池控制
 
 ## 2，使用方法
 
@@ -40,8 +42,12 @@ go get gitee.com/swsk33/concurrent-task-pool
 ```go
 // DownloadTask 一个示例下载任务（参数）表示
 type DownloadTask struct {
-	url      string
+	// 下载地址
+	url string
+	// 文件名
 	filename string
+	// 进度(0-100)
+	process int
 }
 ```
 
@@ -60,7 +66,7 @@ import (
 	"time"
 )
 
-// 省略DownloadTask结构体声明...
+// 省略DownloadTask声明...
 
 // 创建示例任务对象列表
 func createTaskList() []*DownloadTask {
@@ -69,6 +75,7 @@ func createTaskList() []*DownloadTask {
 		list = append(list, &DownloadTask{
 			url:      fmt.Sprintf("http://example.com/file/%d.txt", i),
 			filename: fmt.Sprintf("file-%d.txt", i),
+			process:  0,
 		})
 	}
 	return list
@@ -78,18 +85,25 @@ func main() {
 	// 1.创建任务列表
 	list := createTaskList()
 	// 2.创建任务池
-	pool := concurrent_task_pool.NewTaskPool[*DownloadTask](3, list, func(task *DownloadTask, pool *concurrent_task_pool.TaskPool[*DownloadTask]) {
-		fmt.Printf("正在下载：%s...\n", task.filename)
-		// 模拟执行任务
-		time.Sleep(350 * time.Millisecond)
-		fmt.Printf("下载%s完成！\n", task.filename)
-	}, func(tasks []*DownloadTask) {
-		fmt.Println("接收到终止信号！")
-		fmt.Println("当前任务：")
-		for _, task := range tasks {
-			fmt.Println(task.url)
-		}
-	})
+	pool := concurrent_task_pool.NewTaskPool[*DownloadTask](3, 0, list,
+		// 每个任务的自定义执行逻辑回调函数
+		func(task *DownloadTask, pool *concurrent_task_pool.TaskPool[*DownloadTask]) {
+			fmt.Printf("正在下载：%s...\n", task.filename)
+			// 模拟执行任务
+			for i := 0; i < 4; i++ {
+				task.process += 25
+				time.Sleep(100 * time.Millisecond)
+			}
+			fmt.Printf("下载%s完成！\n", task.filename)
+		},
+		// 接收到终止信号时的停机逻辑回调函数
+		func(pool *concurrent_task_pool.TaskPool[*DownloadTask]) {
+			fmt.Println("接收到终止信号！")
+			fmt.Println("当前任务：")
+			for _, task := range pool.GetRunningTaskList() {
+				fmt.Println(task.url)
+			}
+		})
 	// 3.启动任务池
 	pool.Start()
 }
@@ -100,19 +114,29 @@ func main() {
 - **准备任务列表**：创建自定义的任务对象列表，并组织为切片形式
 - **创建任务池**：通过`NewTaskPool`构造函数创建任务池对象`TaskPool`，其中：
 	- 泛型`T`：表示**自定义任务对象的类型**，若任务对象为结构体建议使用指针形式
-	- 参数`1`：**并发数**，表示任务池中同时有多少个任务并发执行
-	- 参数`2`：**任务列表**，传入我们自定义的任务对象切片
-	- 参数`3`：**任务执行逻辑**，为一个回调函数，用于自定义每个任务的执行逻辑，该回调函数有下列参数：
-		- 参数`1`：**每次执行任务时从队列取出的那个任务对象**，可在回调函数中通过对该任务对象进行处理，实现自定义的任务执行逻辑，该函数调用会在一个单独的Goroutine中异步执行
-		- 参数`2`：**并发任务池对象本身**，可在每个任务执行时通过该任务池访问任务池中的队列或者中断任务池等
-	- 参数`4`：**停机逻辑**，为一个回调函数，用于自定义接收到终止信号（例如`Ctrl + C`）时执行的逻辑，其参数表示**接收到终止信号时正在执行的任务列表**，可将其持久化
+	- 参数`1`：**并发数**，即`worker`数量，每一个`worker`负责在一个单独的线程中运行任务，当队列中任务数量足够时，并发任务池会一直保持有给定并发数个任务一直在运行
+	- 参数`2`：指定任务池**启动时创建`worker`时的时间间隔**，若设为`0`则会在开启并发任务池时同时创建完成全部`worker`，该参数**不影响**任务池执行时`worker`从队列取出任务的速度，仅仅代表任务池初始化时创建`worker`的间隔
+	- 参数`3`：**任务列表**，传入我们自定义的任务对象切片
+	- 参数`4`：**任务执行逻辑**，为一个回调函数，用于自定义每个任务的执行逻辑，该回调函数有下列参数：
+		- 参数`1`：**每次执行任务时从队列取出的那个任务对象**，可在回调函数中通过对该任务对象进行处理，实现自定义的任务执行逻辑，并更新任务状态等，该函数调用会由任务池的`worker`在一个单独的Goroutine中异步执行
+		- 参数`2`：**并发任务池对象本身**，可在每个任务执行时按需调用任务池对象实现任务重试或者中断任务池等操作
+	- 参数`5`：**停机逻辑**，为一个回调函数，用于自定义接收到终止信号（例如`Ctrl + C`）时执行的逻辑，参数也是并发任务池本身，可通过任务池对象获取该时刻任务池中的任务列表以及正在执行的任务列表
 - **启动任务池**：调用任务池对象`Start`方法启动即可，此时开始并发地执行任务，该方法会阻塞当前线程直到任务队列中的任务全部执行完成
+
+`TaskPool`即为整个并发任务池对象，该对象有下列方法：
+
+- `IsAllDone()` 返回该并发任务池是否完成了全部任务，（任务队列中无任务，且正在执行的任务集合中也没有任务了，说明全部任务完成），当并发任务池全部任务执行完成时，返回`true`
+- `GetTaskList()` 获取并发任务池中的全部位于任务队列中的任务列表，该方法返回当前并发任务池中，位于任务队列中的全部任务（还在排队且**未执行**的任务）
+- `GetRunningTaskList()` 获取并发任务池中正在执行的任务列表，返回当前并发任务池全部**正在执行**的任务
+- `Retry(task)` 重试任务，若任务执行失败，可将当前任务对象重新放回并发任务池的任务队列中，使其在后续重新执行，参数即为传入要重试的任务
+
+下面，将结合一些实际用例讲解任务池的方法。
 
 ### (4) 实现失败重试
 
 在`TaskPool`对象中，都使用了一个线程安全的队列来实现存放未完成任务，这样的话如果有的任务执行失败了，我们就可以将其放回队列，实现后续重试该任务。
 
-以无返回值的并发任务池为例，实现在任务执行失败时，将任务放回队列以后续重试的操作：
+在任务执行失败时，调用任务池的`Retry`方法即可将任务放回队列，并在后续重试：
 
 ```go
 package main
@@ -123,7 +147,7 @@ import (
 	"time"
 )
 
-// 省略DownloadTask结构体声明...
+// 省略DownloadTask声明...
 
 // 创建带有错误的任务对象列表
 func createTaskListWithError() []*DownloadTask {
@@ -134,12 +158,14 @@ func createTaskListWithError() []*DownloadTask {
 			list = append(list, &DownloadTask{
 				url:      "",
 				filename: fmt.Sprintf("file-%d.txt", i),
+				process:  0,
 			})
 			continue
 		}
 		list = append(list, &DownloadTask{
 			url:      fmt.Sprintf("http://example.com/file/%d.txt", i),
 			filename: fmt.Sprintf("file-%d.txt", i),
+			process:  0,
 		})
 	}
 	return list
@@ -149,47 +175,40 @@ func main() {
 	// 1.创建任务队列
 	list := createTaskListWithError()
 	// 2.创建任务池
-	pool := concurrent_task_pool.NewTaskPool[*DownloadTask](3, list, func(task *DownloadTask, pool *concurrent_task_pool.TaskPool[*DownloadTask]) {
-		fmt.Printf("正在下载：%s...\n", task.filename)
-		// 模拟出现错误
-		if task.url == "" {
-			fmt.Println("出现错误！")
-			task.url = fmt.Sprintf("http://example.com/file/%s", task.filename)
-			// 将任务重新放回并发任务池的任务队列
-			// pool的TaskQueue属性即为任务池中存放全部任务的队列
-			// Offer方法可将对象入队列
-			pool.TaskQueue.Offer(task)
-			return
-		}
-		// 模拟执行任务
-		time.Sleep(350 * time.Millisecond)
-		fmt.Printf("下载%s完成！\n", task.filename)
-	}, func(tasks []*DownloadTask) {
-		fmt.Println("接收到终止信号！")
-		fmt.Println("当前任务：")
-		for _, task := range tasks {
-			fmt.Println(task.url)
-		}
-	})
+	pool := concurrent_task_pool.NewTaskPool[*DownloadTask](3, 0, list,
+		// 每个任务的自定义执行逻辑回调函数
+		func(task *DownloadTask, pool *concurrent_task_pool.TaskPool[*DownloadTask]) {
+			fmt.Printf("正在下载：%s...\n", task.filename)
+			// 模拟出现错误
+			if task.url == "" {
+				fmt.Println("出现错误！")
+				task.url = fmt.Sprintf("http://example.com/file/%s", task.filename)
+				// 稍后重试任务
+				// 调用并发任务池对象的Retry方法，传入当前任务对象，即可将任务重新放回并发任务池的任务队列
+				pool.Retry(task)
+				return
+			}
+			// 模拟执行任务
+			for i := 0; i < 4; i++ {
+				task.process += 25
+				time.Sleep(100 * time.Millisecond)
+			}
+			fmt.Printf("下载%s完成！\n", task.filename)
+		},
+		// 接收到终止信号时的停机逻辑回调函数
+		func(pool *concurrent_task_pool.TaskPool[*DownloadTask]) {
+			fmt.Println("接收到终止信号！")
+			fmt.Println("当前任务：")
+			for _, task := range pool.GetRunningTaskList() {
+				fmt.Println(task.url)
+			}
+		})
 	// 3.启动任务池
 	pool.Start()
 }
 ```
 
-可见这里有以下的不同：
-
-- 首先仍然是通过任务对象列表切片创建了并发任务池对象
-- 在自定义的任务执行回调函数中，当遇到任务失败的情况时，就可以调用回调函数参数的`pool`对象（并发任务池本身）的`TaskQueue`属性，将当前任务对象放回队列，实现后续重试该任务
-
-`TaskPool`对象的`TaskQueue`属性即为**任务池中存放全部任务的队列**，该队列为内部封装的`ArrayQueue`指针类型，有下列方法：
-
-- `Poll()` 队头元素出队列
-- `Offer(e)` 元素进入队列
-- `Peek()` 查看队头元素，但是不移除
-- `IsEmpty()` 返回队列是否为空
-- `Size()` 返回队列元素个数
-- `Clear()` 清空队列
-- `ToSlice()` 将队列以切片形式返回
+在自定义的任务执行回调函数中，当遇到任务失败的情况时，就可以调用回调函数参数的`pool`对象（并发任务池本身）的`Retry`方法，将当前任务对象放回任务池的队列，实现后续重试该任务。
 
 ### (5) 任务池中断
 
@@ -204,52 +223,40 @@ import (
 	"time"
 )
 
-// 省略DownloadTask结构体声明...
-
-// 创建带有错误的任务对象列表
-func createTaskListWithError() []*DownloadTask {
-	list := make([]*DownloadTask, 0)
-	for i := 1; i <= 10; i++ {
-		// 模拟第3个任务有错误
-		if i == 3 {
-			list = append(list, &DownloadTask{
-				url:      "",
-				filename: fmt.Sprintf("file-%d.txt", i),
-			})
-			continue
-		}
-		list = append(list, &DownloadTask{
-			url:      fmt.Sprintf("http://example.com/file/%d.txt", i),
-			filename: fmt.Sprintf("file-%d.txt", i),
-		})
-	}
-	return list
-}
+// 省略DownloadTask声明...
+// 省略createTaskListWithError方法...
 
 func main() {
 	// 1.创建任务队列
 	list := createTaskListWithError()
 	// 2.创建任务池
-	pool := concurrent_task_pool.NewTaskPool[*DownloadTask](3, list, func(task *DownloadTask, pool *concurrent_task_pool.TaskPool[*DownloadTask]) {
-		fmt.Printf("正在下载：%s...\n", task.filename)
-		// 模拟出现错误
-		if task.url == "" {
-			fmt.Println("出现错误！")
-			// 调用pool对象的Interrupt方法直接中断整个任务池
-			pool.Interrupt()
-			fmt.Println("已结束任务池！")
-			return
-		}
-		// 模拟执行任务
-		time.Sleep(350 * time.Millisecond)
-		fmt.Printf("下载%s完成！\n", task.filename)
-	}, func(tasks []*DownloadTask) {
-		fmt.Println("接收到终止信号！")
-		fmt.Println("当前任务：")
-		for _, task := range tasks {
-			fmt.Println(task.url)
-		}
-	})
+	pool := concurrent_task_pool.NewTaskPool[*DownloadTask](3, 0, list,
+		// 每个任务的自定义执行逻辑回调函数
+		func(task *DownloadTask, pool *concurrent_task_pool.TaskPool[*DownloadTask]) {
+			fmt.Printf("正在下载：%s...\n", task.filename)
+			// 模拟出现错误
+			if task.url == "" {
+				fmt.Println("出现错误！")
+				// 调用pool对象的Interrupt方法直接中断整个任务池
+				pool.Interrupt()
+				fmt.Println("已结束任务池！")
+				return
+			}
+			// 模拟执行任务
+			for i := 0; i < 4; i++ {
+				task.process += 25
+				time.Sleep(100 * time.Millisecond)
+			}
+			fmt.Printf("下载%s完成！\n", task.filename)
+		},
+		// 接收到终止信号时的停机逻辑回调函数
+		func(pool *concurrent_task_pool.TaskPool[*DownloadTask]) {
+			fmt.Println("接收到终止信号！")
+			fmt.Println("当前任务：")
+			for _, task := range pool.GetRunningTaskList() {
+				fmt.Println(task.url)
+			}
+		})
 	// 3.启动任务池
 	pool.Start()
 }
@@ -257,7 +264,66 @@ func main() {
 
 上述示例中，当某个任务遇到错误时，直接调用了任务池对象的`Interrupt`方法进行了中断操作，此时任务池将不会继续执行任务，且无法恢复。
 
-### (6) 有返回值的任务池
+### (6) 获取正在执行的任务状态
+
+在并发任务池运行时，我们可以使用一个单独的线程，在其中读取并显现并发任务池中正在执行的任务的状态：
+
+```go
+package main
+
+import (
+	"fmt"
+	"gitee.com/swsk33/concurrent-task-pool"
+	"time"
+)
+
+// 省略DownloadTask声明...
+// 省略createTaskList方法...
+
+func main() {
+	// 1.创建任务列表
+	list := createTaskList()
+	// 2.创建任务池
+	pool := concurrent_task_pool.NewTaskPool[*DownloadTask](3, 0, list,
+		// 每个任务的自定义执行逻辑回调函数
+		func(task *DownloadTask, pool *concurrent_task_pool.TaskPool[*DownloadTask]) {
+			// 模拟执行任务
+			for i := 0; i < 10; i++ {
+				task.process += 10
+				time.Sleep(100 * time.Millisecond)
+			}
+		},
+		// 接收到终止信号时的停机逻辑回调函数
+		func(pool *concurrent_task_pool.TaskPool[*DownloadTask]) {
+			fmt.Println("接收到终止信号！")
+			fmt.Println("当前任务：")
+			for _, task := range pool.GetRunningTaskList() {
+				fmt.Println(task.url)
+			}
+		})
+	// 3.在一个新的线程中实时查看任务状态
+	go func() {
+		// 在并发任务池运行时，每隔一段时间通过GetRunningTaskList函数获取当前正在执行的任务列表
+		for !pool.IsAllDone() {
+			// 每次输出时清屏（实现实时输出效果）
+			fmt.Print("\033[H\033[J")
+			// 获取当前正在执行的任务
+			tasks := pool.GetRunningTaskList()
+			// 遍历获取全部任务状态
+			for _, task := range tasks {
+				fmt.Printf("正在下载：%s，进度：%d%%\n", task.filename, task.process)
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}()
+	// 4.启动任务池
+	pool.Start()
+}
+```
+
+通过`TaskPool`对象的`GetRunningTaskList`方法，能够获取当前时刻任务池正在执行的全部任务列表。
+
+### (7) 有返回值的任务池
 
 上述使用的任务池`TaskPool`中的异步任务是没有返回值的，可使用`ReturnableTaskPool`来执行有返回值的异步任务：
 
@@ -270,37 +336,33 @@ import (
 	"time"
 )
 
-// 省略DownloadTask结构体声明...
-
-// 创建示例任务对象列表
-func createTaskList() []*DownloadTask {
-	list := make([]*DownloadTask, 0)
-	for i := 1; i <= 30; i++ {
-		list = append(list, &DownloadTask{
-			url:      fmt.Sprintf("http://example.com/file/%d.txt", i),
-			filename: fmt.Sprintf("file-%d.txt", i),
-		})
-	}
-	return list
-}
+// 省略DownloadTask声明...
+// 省略createTaskList方法...
 
 func main() {
 	// 1.创建任务列表
 	list := createTaskList()
 	// 2.创建任务池（有返回值的）
-	pool := concurrent_task_pool.NewReturnableTaskPool[*DownloadTask, string](3, list, func(task *DownloadTask, pool *concurrent_task_pool.ReturnableTaskPool[*DownloadTask, string]) string {
-		fmt.Printf("正在下载：%s...\n", task.filename)
-		// 模拟执行任务
-		time.Sleep(350 * time.Millisecond)
-		// 返回文件名
-		return task.filename
-	}, func(tasks []*DownloadTask) {
-		fmt.Println("接收到终止信号！")
-		fmt.Println("当前任务：")
-		for _, task := range tasks {
-			fmt.Println(task.url)
-		}
-	})
+	pool := concurrent_task_pool.NewReturnableTaskPool[*DownloadTask, string](3, 0, list,
+		// 每个任务的自定义执行逻辑回调函数
+		func(task *DownloadTask, pool *concurrent_task_pool.ReturnableTaskPool[*DownloadTask, string]) string {
+			fmt.Printf("正在下载：%s...\n", task.filename)
+			// 模拟执行任务
+			for i := 0; i < 4; i++ {
+				task.process += 25
+				time.Sleep(100 * time.Millisecond)
+			}
+			// 返回文件名
+			return task.filename
+		},
+		// 接收到终止信号时的停机逻辑回调函数
+		func(pool *concurrent_task_pool.ReturnableTaskPool[*DownloadTask, string]) {
+			fmt.Println("接收到终止信号！")
+			fmt.Println("当前任务：")
+			for _, task := range pool.GetRunningTaskList() {
+				fmt.Println(task.url)
+			}
+		})
 	// 3.启动任务池
 	resultList := pool.Start(true)
 	// 4.执行完成，读取结果
@@ -314,8 +376,8 @@ func main() {
 借助`NewReturnableTaskPool`构造函数可以创建一个有返回值的并发任务池，其参数和`NewTaskPool`构造函数几乎一样，只不过：
 
 - 多了一个泛型`R`表示**任务返回的类型**
-- 参数`3`自定义任务执行逻辑回调函数有返回值，需要在这个回调函数中**返回任务执行完成后的结果**
+- 参数`4`自定义任务执行逻辑回调函数有返回值，需要在这个回调函数中**返回任务执行完成后的结果**
 
 此外，`Start`方法启动任务池时，需要传入一个`bool`类型参数表示**是否忽略空的任务结果**，如果该参数为`true`，那么当一个任务返回的结果为`nil`或者对应类型零值时，这个结果就不会被包含在最终的结果中。此外，这里的`Start`的返回值就是全部任务执行后收集的全部返回结果的切片。
 
-可以使用和`TaskPool`同样的方式，在有返回值的并发任务池中实现失败重试或者中断操作。
+`ReturnableTaskPool`的方法及其调用方式与`TaskPool`对象相同，因此可以使用和`TaskPool`同样的方式，在有返回值的并发任务池中实现失败重试或者中断操作等。
