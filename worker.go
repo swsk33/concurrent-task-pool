@@ -1,5 +1,7 @@
 package concurrent_task_pool
 
+import "time"
+
 // worker 是任务池中的每一个任务运行器
 //
 // 泛型T表示任务对象参数类型
@@ -41,6 +43,10 @@ func (worker *worker[T]) start(isShutdown *bool) {
 			}
 			// 将当前任务存入当前正在运行的任务集合中
 			pool.runningTasks.add(task)
+			// 延迟执行
+			if pool.workerExecuteDelay > 0 {
+				time.Sleep(pool.workerExecuteDelay)
+			}
 			// 执行任务
 			worker.run(task, worker.taskPool)
 			// 执行完成后，从当前任务列表移除

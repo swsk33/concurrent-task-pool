@@ -2,6 +2,7 @@ package concurrent_task_pool
 
 import (
 	"sync"
+	"time"
 )
 
 // returnableWorker 是任务池中的每一个任务运行器
@@ -52,6 +53,10 @@ func (worker *returnableWorker[T, R]) start(lock *sync.Mutex, isShutdown *bool, 
 			}
 			// 将当前任务存入当前正在运行的任务集合中
 			pool.runningTasks.add(task)
+			// 延迟执行
+			if pool.workerExecuteDelay > 0 {
+				time.Sleep(pool.workerExecuteDelay)
+			}
 			// 执行任务
 			result := worker.run(task, worker.taskPool)
 			// 收集结果

@@ -13,14 +13,27 @@ type mapSet[T comparable] struct {
 	lock sync.RWMutex
 }
 
-// 创建一个新的MapSet
+// 创建一个新的mapSet
 //
-// 返回空的MapSet
+// 返回空的mapSet
 func newMapSet[T comparable]() *mapSet[T] {
 	return &mapSet[T]{
 		data: make(map[T]*void),
 		lock: sync.RWMutex{},
 	}
+}
+
+// 从一个现有的切片新建一个mapSet
+//
+// slice 现有的切片数据
+//
+// 包含了切片数据的集合
+func newMapSetFromSlice[T comparable](slice []T) *mapSet[T] {
+	set := newMapSet[T]()
+	for _, item := range slice {
+		set.data[item] = nil
+	}
+	return set
 }
 
 // 添加数据到集合
