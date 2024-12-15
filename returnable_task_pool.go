@@ -63,7 +63,7 @@ func NewReturnableTaskPool[T, R comparable](concurrent int, createInterval, exec
 			taskQueue:          newArrayQueueFromSlice(taskList),
 			runningTasks:       newMapSet[T](),
 			isInterrupt:        false,
-			saveTicker:         nil,
+			isAutoSaving:       false,
 		},
 		run:      runFunction,
 		shutdown: shutdownFunction,
@@ -154,7 +154,5 @@ func (pool *ReturnableTaskPool[T, R]) Start(ignoreEmpty bool) []R {
 	}
 	// 结束全部worker
 	workerShutdown = true
-	// 关闭自动任务保存
-	pool.DisableTaskAutoSave()
 	return resultList
 }

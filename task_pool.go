@@ -60,7 +60,7 @@ func NewTaskPool[T comparable](concurrent int, createInterval, executeDelay time
 			taskQueue:          newArrayQueueFromSlice(taskList),
 			runningTasks:       newMapSet[T](),
 			isInterrupt:        false,
-			saveTicker:         nil,
+			isAutoSaving:       false,
 		},
 		run:      runFunction,
 		shutdown: shutdownFunction,
@@ -142,6 +142,4 @@ func (pool *TaskPool[T]) Start() {
 	}
 	// 结束全部worker
 	workerShutdown = true
-	// 关闭自动任务保存
-	pool.DisableTaskAutoSave()
 }

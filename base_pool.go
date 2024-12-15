@@ -26,8 +26,8 @@ type basePool[T comparable] struct {
 	// 是否被中断
 	// 当该变量为true时，则会立即停止并发任务池的任务
 	isInterrupt bool
-	// 用于自动任务保存的计时器
-	saveTicker *time.Ticker
+	// 是否正在执行自动任务保存
+	isAutoSaving bool
 }
 
 // IsAllDone 返回该并发任务池是否完成了全部任务
@@ -41,6 +41,7 @@ func (pool *basePool[T]) IsAllDone() bool {
 // Interrupt 中断任务池，立即停止任务池中正在执行的任务
 func (pool *basePool[T]) Interrupt() {
 	pool.isInterrupt = true
+	pool.DisableTaskAutoSave()
 }
 
 // GetQueuedTaskList 获取并发任务池中的全部位于任务队列中的任务列表
@@ -101,22 +102,27 @@ func (pool *basePool[T]) SaveTaskList(file string) error {
 //   - file 任务文件保存位置
 //   - interval 自动保存间隔
 func (pool *basePool[T]) EnableTaskAutoSave(file string, interval time.Duration) {
-	pool.saveTicker = time.NewTicker(interval)
+	// 标记为自动保存
+	pool.isAutoSaving = true
+	// 定时执行逻辑
 	go func() {
-		for range pool.saveTicker.C {
+		for pool.isAutoSaving {
 			e := pool.SaveTaskList(file)
 			if e != nil {
 				fmt.Printf("保存任务出现错误：%s\n", e)
 			}
+			if pool.IsAllDone() {
+				pool.DisableTaskAutoSave()
+				return
+			}
+			time.Sleep(interval)
 		}
 	}()
 }
 
 // DisableTaskAutoSave 关闭自动任务保存
 // 在使用 EnableTaskAutoSave 后，若后续不再需要自动保存任务，则可以调用该函数关闭自动保存
-// 此外，任务池全部任务执行完成后或者被中断时，会自动关闭自动任务保存
+// 此外，任务池全部任务执行完成后或者被中断时，该方法也会被自动调用关闭自动任务保存
 func (pool *basePool[T]) DisableTaskAutoSave() {
-	if pool.saveTicker != nil {
-		pool.saveTicker.Stop()
-	}
+	pool.isAutoSaving = false
 }
