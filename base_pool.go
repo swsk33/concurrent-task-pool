@@ -44,6 +44,14 @@ func (pool *basePool[T]) Interrupt() {
 	pool.DisableTaskAutoSave()
 }
 
+// IsInterrupt 返回任务池对象是否已被中断
+//
+// 如果调用过Interrupt方法，或者任务池接收到终止信号（例如Ctrl + C）之后，该方法返回true
+// 正常完成并结束了全部任务的任务池不视为中断，调用该方法仍返回false
+func (pool *basePool[T]) IsInterrupt() bool {
+	return pool.isInterrupt
+}
+
 // GetQueuedTaskList 获取并发任务池中的全部位于任务队列中的任务列表
 //
 // 返回当前并发任务池中，位于任务队列中的全部任务（还在排队且未执行的任务）

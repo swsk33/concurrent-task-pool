@@ -121,19 +121,23 @@ func (pool *ReturnableTaskPool[T, R]) Start(ignoreEmpty bool) []R {
 	// 用于控制worker运行的变量，当为false时全部worker将一直等待从任务取出任务执行，否则都会立即停止运行
 	workerShutdown := false
 	// 在一个新的线程接收终止信号
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-signals
-		// 标记程序执行完成，结束全部worker
-		workerShutdown = true
-		// 执行shutdown回调
-		if pool.shutdown != nil {
-			pool.shutdown(pool)
-		}
-		// 标记为中断
-		pool.isInterrupt = true
-	}()
+	var signals chan os.Signal
+	if pool.shutdown != nil {
+		signals = make(chan os.Signal, 1)
+		signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+		go func() {
+			// 等待信号
+			s := <-signals
+			if s != nil {
+				// 结束全部worker
+				workerShutdown = true
+				// 执行shutdown回调
+				pool.shutdown(pool)
+				// 标记为中断
+				pool.isInterrupt = true
+			}
+		}()
+	}
 	// 创建结果列表切片
 	resultList := make([]R, 0)
 	// 创建worker
@@ -154,5 +158,9 @@ func (pool *ReturnableTaskPool[T, R]) Start(ignoreEmpty bool) []R {
 	}
 	// 结束全部worker
 	workerShutdown = true
+	// 关闭信号接收通道
+	if signals != nil {
+		close(signals)
+	}
 	return resultList
 }

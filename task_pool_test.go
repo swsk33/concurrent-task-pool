@@ -139,15 +139,7 @@ func TestTaskPool_Interrupt(t *testing.T) {
 				time.Sleep(100 * time.Millisecond)
 			}
 			fmt.Printf("下载%s完成！\n", task.Filename)
-		},
-		// 接收到终止信号时的停机逻辑回调函数
-		func(pool *TaskPool[*DownloadTask]) {
-			fmt.Println("接收到终止信号！")
-			fmt.Println("当前任务：")
-			for _, task := range pool.GetRunningTaskList() {
-				fmt.Println(task.Url)
-			}
-		}, nil)
+		}, nil, nil)
 	// 3.启动任务池
 	pool.Start()
 }

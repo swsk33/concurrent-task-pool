@@ -111,19 +111,23 @@ func (pool *TaskPool[T]) Start() {
 	// 用于控制worker运行的变量，当为false时全部worker将一直等待从任务取出任务执行，否则都会立即停止运行
 	workerShutdown := false
 	// 在一个新的线程接收终止信号
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-signals
-		// 结束全部worker
-		workerShutdown = true
-		// 执行shutdown回调
-		if pool.shutdown != nil {
-			pool.shutdown(pool)
-		}
-		// 标记为中断
-		pool.isInterrupt = true
-	}()
+	var signals chan os.Signal
+	if pool.shutdown != nil {
+		signals = make(chan os.Signal, 1)
+		signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+		go func() {
+			// 等待信号
+			s := <-signals
+			if s != nil {
+				// 结束全部worker
+				workerShutdown = true
+				// 执行shutdown回调
+				pool.shutdown(pool)
+				// 标记为中断
+				pool.isInterrupt = true
+			}
+		}()
+	}
 	// 创建worker
 	for i := 0; i < pool.concurrent; i++ {
 		eachWorker := newWorker[T](pool.run, pool)
@@ -142,4 +146,8 @@ func (pool *TaskPool[T]) Start() {
 	}
 	// 结束全部worker
 	workerShutdown = true
+	// 关闭信号接收通道
+	if signals != nil {
+		close(signals)
+	}
 }
