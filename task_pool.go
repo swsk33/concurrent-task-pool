@@ -148,6 +148,7 @@ func (pool *TaskPool[T]) Start() {
 	workerShutdown = true
 	// 关闭信号接收通道
 	if signals != nil {
+		signal.Stop(signals)
 		close(signals)
 	}
 }
